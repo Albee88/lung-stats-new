@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>班级肺活量实时统计</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  body{font-family:微软雅黑, sans-serif; max-width:800px; margin:0 auto; padding:15px;}
+  .box{border:1px solid #ccc; padding:15px; margin:15px 0; border-radius:8px;}
+  input,select,button{padding:8px; margin:5px; width:200px; font-size:16px;}
+  button{background:#409eff; color:white; border:none; border-radius:4px; cursor:pointer;}
+  button.danger{background:#f56c6c;}
+  button.success{background:#67c23a;}
+  table{width:100%; border-collapse:collapse; margin-top:10px;}
+  td,th{border:1px solid #ccc; padding:8px; text-align:center;}
+</style>
+</head>
+<body>
+
+<div class="box">
+  <h3>学生填写肺活量</h3>
+  <input type="text" id="name" placeholder="姓名"><br>
+  <select id="gender">
+    <option value="男">男</option>
+    <option value="女">女</option>
+  </select><br>
+  <input type="number" id="lung" placeholder="肺活量(ml)"><br>
+  <button onclick="addData()">提交</button>
+</div>
+
+<div class="box">
+  <h3>实时数据列表</h3>
+  <button class="success" onclick="exportExcel()">导出 Excel</button>
+  <button class="danger" onclick="clearData()">清空所有数据</button>
+  <table id="table">
+    <tr><th>姓名</th><th>性别</th><th>肺活量</th></tr>
+  </table>
+</div>
+
+<div class="box">
+  <h3>男女肺活量平均值对比</h3>
+  <canvas id="chart" height="250"></canvas>
+</div>
+
+<script>
+// 我为你配置好的 Supabase 信息
+const supabaseUrl = 'https://jvqgqfszqfkvqfkv.supabase.co';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+
+// 初始化 Supabase 客户端
+const supabase = supabase.createClient(supabaseUrl, supabaseKey);
+
+const ctx = document.getElementById('chart').getContext('2d');
+let myChart;
+let list = [];
+
+// 实时监听数据库变化
+async function subscribeToChanges() {
+  const channel = supabase.channel('lung-data-channel')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'lung_data' }, 
+      (payload) => { fetchData(); }
+    )
+    .subscribe();
+}
+
+// 从数据库获取所有数据
+async function fetchData() {
+  const { data, error } = await supabase.from('lung_data').select('*');
+  if (error) console.error('Error fetching data:', error);
+  else {
+    list = data;
+    render();
+  }
+}
+
+function render(){
+  const table = document.getElementById('table');
+  table.innerHTML = `<tr><th>姓名</th><th>性别</th><th>肺活量</th></tr>`;
+  list.forEach(item=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${item.name}</td><td>${item.gender}</td><td>${item.lung}</td>`;
+    table.appendChild(tr);
+  });
+
+  const maleList = list.filter(i=>i.gender=='男').map(i=>+i.lung);
+  const femaleList = list.filter(i=>i.gender=='女').map(i=>+i.lung);
+  
+  const maleAvg = maleList.length ? (maleList.reduce((a,b)=>a+b,0)/maleList.length).toFixed(0) : 0;
+  const femaleAvg = femaleList.length ? (femaleList.reduce((a,b)=>a+b,0)/femaleList.length).toFixed(0) : 0;
+
+  if(myChart) myChart.destroy();
+  myChart = new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels:['男生','女生'],
+      datasets:[{
+        label:'肺活量平均值(ml)',
+        data:[maleAvg,femaleAvg],
+        backgroundColor:['#409eff','#f763a4']
+      }]
+    },
+    options:{
+      responsive:true,
+      scales:{y:{beginAtZero:true}}
+    }
+  });
+}
+
+async function addData(){
+  const name = document.getElementById('name').value.trim();
+  const gender = document.getElementById('gender').value;
+  const lung = document.getElementById('lung').value.trim();
+  if(!name || !lung){alert('请填写完整');return;}
+  
+  const { error } = await supabase.from('lung_data').insert([{ name, gender, lung }]);
+  if (error) alert('提交失败: ' + error.message);
+  else {
+    document.getElementById('name').value='';
+    document.getElementById('lung').value='';
+  }
+}
+
+async function clearData(){
+  if(!confirm('确定要清空所有数据吗？清空后无法恢复！')) return;
+  const { error } = await supabase.from('lung_data').delete().neq('id', 0);
+  if (error) alert('清空失败: ' + error.message);
+}
+
+function exportExcel(){
+  if(list.length === 0){alert('暂无数据可导出');return;}
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(list);
+  XLSX.utils.book_append_sheet(wb, ws, "肺活量数据");
+  XLSX.writeFile(wb, "班级肺活量数据.xlsx");
+}
+
+// 页面加载时获取数据并开始监听
+fetchData();
+subscribeToChanges();
+</script>
+</body>
+</html>
